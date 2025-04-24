@@ -96,8 +96,19 @@ retrieved_session = session_service_stateful.get_session(app_name=APP_NAME,
 
 from google.adk.tools.tool_context import ToolContext
 
-def get_weather_stateful(city: str, tool_context: ToolContext) -> dict:
-    """Retrieves weather, converts temp unit based on session state."""
+from .weather import get_weather_at
+
+def get_weather_stateful(latitude: float, longitude: float, city: str, tool_context: ToolContext) -> dict:
+    """Retrieves weather, converts temp unit based on session state.
+    If the latitude or longitude for a city is not known, derive it from the location of the city.
+     Args:
+        latitude (float): The latitude coordinate of the city for which to retrieve the weather report.
+        longitude (float): The longitude coordinate of the city for which to retrieve the weather report.
+        city (str): The name of the city for which to retrieve the weather report.
+
+    Returns:
+        dict: status and result or error msg.
+    """
     print(f"--- Tool: get_weather_stateful called for {city} ---")
 
     # --- Read preference from state ---
@@ -106,17 +117,8 @@ def get_weather_stateful(city: str, tool_context: ToolContext) -> dict:
 
     city_normalized = city.lower().replace(" ", "")
 
-    # Mock weather data (always stored in Celsius internally)
-    mock_weather_db = {
-        "newyork": {"temp_c": 25, "condition": "sunny"},
-        "london": {"temp_c": 15, "condition": "cloudy"},
-        "tokyo": {"temp_c": 18, "condition": "light rain"},
-    }
-
-    if city_normalized in mock_weather_db:
-        data = mock_weather_db[city_normalized]
-        temp_c = data["temp_c"]
-        condition = data["condition"]
+    try:
+        temp_c, condition = get_weather_at(latitude, longitude)
 
         # Format temperature based on state preference
         if preferred_unit == "Fahrenheit":
@@ -135,7 +137,7 @@ def get_weather_stateful(city: str, tool_context: ToolContext) -> dict:
         print(f"--- Tool: Updated state 'last_city_checked_stateful': {city} ---")
 
         return result
-    else:
+    except Exception:
         # Handle city not found
         error_msg = f"Sorry, I don't have weather information for '{city}'."
         print(f"--- Tool: City '{city}' not found. ---")
@@ -271,6 +273,52 @@ def block_paris_tool_guardrail(
 
 print("✅ block_paris_tool_guardrail function defined.")
 
+def test_missing_coords_tool_guardrail(
+        tool: BaseTool, args: Dict[str, Any], tool_context: ToolContext
+    ) -> Optional[Dict]:
+    """
+    Checks if 'get_weather_stateful' is called without the lat or long params.
+    If so, blocks the tool execution and returns a specific error dictionary.
+    Otherwise, allows the tool call to proceed by returning None.
+    """
+    tool_name = tool.name
+    agent_name = tool_context.agent_name # Agent attempting the tool call
+    print(f"--- Callback: test_missing_coords_tool_guardrail running for tool '{tool_name}' in agent '{agent_name}' ---")
+    print(f"--- Callback: Inspecting args: {args} ---")
+
+    # --- Guardrail Logic ---
+    target_tool_name = "get_weather_stateful" # Match the function name used by FunctionTool
+
+    # Check if it's the correct tool and the city argument matches the blocked city
+    if tool_name == target_tool_name:
+        city_argument = args.get("city", "") # Safely get the 'city' argument
+        latitude_argument = args.get("latitude", "") 
+        longitude_argument = args.get("longitude", "")
+        if latitude_argument and longitude_argument:
+            print(f"--- Callback: is allowed for tool '{tool_name}'. ---")
+            return None
+        else:
+            print(f"--- Callback: Detected missing params Lat:'{latitude_argument}', Long:'{longitude_argument}'. Blocking tool execution! ---")
+            # Optionally update state
+            tool_context.state["guardrail_tool_block_triggered"] = True
+            print(f"--- Callback: Set state 'guardrail_tool_block_triggered': True ---")
+
+            # Return a dictionary matching the tool's expected output format for errors
+            # This dictionary becomes the tool's result, skipping the actual tool run.
+            return {
+                "status": "error",
+                "error_message": f"Data error: The agent cannot find the coordinates for the city {city_argument}."
+            }
+    else:
+        print(f"--- Callback: Tool '{tool_name}' is not the target tool. Allowing. ---")
+
+
+    # If the checks above didn't return a dictionary, allow the tool to execute
+    print(f"--- Callback: Allowing tool '{tool_name}' to proceed. ---")
+    return None # Returning None allows the actual tool function to run
+    
+print("✅ test_missing_coords_tool_guardrail function defined.")
+
 # --- Define the Root Agent with the Callback ---
 root_agent = None
 runner_root_tool_guardrail = None
@@ -290,13 +338,14 @@ if ('greeting_agent' in globals() and greeting_agent and
         model=root_agent_model,
         description="Main agent: Handles weather, delegates greetings/farewells, includes input keyword guardrail.",
         instruction="You are the main Weather Agent. Provide weather using 'get_weather_stateful'. "
+                    "Provide the latitude and longitude coordinates of a city to the tools."
                     "Delegate simple greetings to 'greeting_agent' and farewells to 'farewell_agent'. "
-                    "Handle only weather requests, greetings, and farewells.",
+                    "Handle only weather requests, greetings, and farewells. ",
         tools=[get_weather_stateful],
         sub_agents=[greeting_agent, farewell_agent], # Reference the redefined sub-agents
         output_key="last_weather_report", # Keep output_key from Step 4
         before_model_callback=block_keyword_guardrail, # <<< Assign the guardrail callback
-        before_tool_callback=block_paris_tool_guardrail # <<< Add tool guardrail
+        before_tool_callback=test_missing_coords_tool_guardrail # <<< Add tool guardrail
     )
     print(f"✅ Root Agent '{root_agent.name}' created with BOTH callbacks.")
 
