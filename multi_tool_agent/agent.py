@@ -1,13 +1,7 @@
-from google.adk.agents import Agent
-from google.adk.sessions import InMemorySessionService
-from google.adk.runners import Runner
-from google.genai import types # For creating message Content/Parts
+from typing import Optional, Dict, Any # For type hints
 
-# load_dotenv("./multi_tool_agent/.env")
-# print("API Keys Set:")
-# print(f"Google API Key set: {'Yes' if os.environ.get('GOOGLE_API_KEY') else 'No'}")
-# print(f"OpenAI API Key set: {'Yes' if os.environ.get('OPENAI_API_KEY') else 'No'}")
-# print(f"Anthropic API Key set: {'Yes' if os.environ.get('ANTHROPIC_API_KEY') else 'No'}")
+from google.adk.agents import Agent
+from google.genai import types # For creating message Content/Parts
 
 # --- Define Model Constants for easier use ---
 
@@ -19,31 +13,6 @@ MODEL_CLAUDE_SONNET = "anthropic/claude-3-sonnet-20240229"
 
 # Use one of the model constants defined earlier
 AGENT_MODEL = MODEL_GEMINI_2_0_FLASH # Starting with Gemini
-
-async def call_agent_async(query: str, runner, user_id, session_id):
-  """Sends a query to the agent and prints the final response."""
-  print(f"\n>>> User Query: {query}")
-
-  # Prepare the user's message in ADK format
-  content = types.Content(role='user', parts=[types.Part(text=query)])
-
-  final_response_text = "Agent did not produce a final response." # Default
-
-  # Key Concept: run_async executes the agent logic and yields Events.
-  # We iterate through events to find the final answer.
-  async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=content):
-      # You can uncomment the line below to see *all* events during execution
-      # print(f"  [Event] Author: {event.author}, Type: {type(event).__name__}, Final: {event.is_final_response()}, Content: {event.content}")
-
-      # Key Concept: is_final_response() marks the concluding message for the turn.
-      if event.is_final_response():
-          if event.content and event.content.parts:
-             # Assuming text response in the first part
-             final_response_text = event.content.parts[0].text
-          elif event.actions and event.actions.escalate: # Handle potential errors/escalations
-             final_response_text = f"Agent escalated: {event.error_message or 'No specific message.'}"
-          # Add more checks here if needed (e.g., specific error codes)
-          break # Stop processing events once the final response is found
 
 def say_hello(name: str = "there") -> str:
     """Provides a simple greeting, optionally addressing the user by name.
@@ -61,38 +30,6 @@ def say_goodbye() -> str:
     """Provides a simple farewell message to conclude the conversation."""
     print(f"--- Tool: say_goodbye called ---")
     return "Goodbye! Have a great day."
-
-# Create a NEW session service instance for this state demonstration
-session_service_stateful = InMemorySessionService()
-print("✅ New InMemorySessionService created for state demonstration.")
-
-# Define a NEW session ID for this part of the tutorial
-SESSION_ID_STATEFUL = "session_state_demo_001"
-USER_ID_STATEFUL = "user_state_demo"
-
-# Define initial state data - user prefers Celsius initially
-initial_state = {
-    "user_preference_temperature_unit": "Celsius"
-}
-
-# Define constants for identifying the interaction context
-APP_NAME = "weather_tutorial_app"
-USER_ID = "user_1"
-SESSION_ID = "session_001" # Using a fixed ID for simplicity
-
-# Create the session, providing the initial state
-session_stateful = session_service_stateful.create_session(
-    app_name=APP_NAME, # Use the consistent app name
-    user_id=USER_ID_STATEFUL,
-    session_id=SESSION_ID_STATEFUL,
-    state=initial_state # <<< Initialize state during creation
-)
-print(f"✅ Session '{SESSION_ID_STATEFUL}' created for user '{USER_ID_STATEFUL}'.")
-
-# Verify the initial state was set correctly
-retrieved_session = session_service_stateful.get_session(app_name=APP_NAME,
-                                                         user_id=USER_ID_STATEFUL,
-                                                         session_id = SESSION_ID_STATEFUL)
 
 from google.adk.tools.tool_context import ToolContext
 
@@ -177,7 +114,6 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types # For creating response content
-from typing import Optional
 
 def block_keyword_guardrail(
     callback_context: CallbackContext, llm_request: LlmRequest
@@ -226,8 +162,6 @@ def block_keyword_guardrail(
 print("✅ block_keyword_guardrail function defined.")
 
 from google.adk.tools.base_tool import BaseTool
-from google.adk.tools.tool_context import ToolContext
-from typing import Optional, Dict, Any # For type hints
 
 def block_paris_tool_guardrail(
     tool: BaseTool, args: Dict[str, Any], tool_context: ToolContext
@@ -321,7 +255,6 @@ print("✅ test_missing_coords_tool_guardrail function defined.")
 
 # --- Define the Root Agent with the Callback ---
 root_agent = None
-runner_root_tool_guardrail = None
 
 # Check all components before proceeding
 if ('greeting_agent' in globals() and greeting_agent and
@@ -348,19 +281,6 @@ if ('greeting_agent' in globals() and greeting_agent and
         before_tool_callback=test_missing_coords_tool_guardrail # <<< Add tool guardrail
     )
     print(f"✅ Root Agent '{root_agent.name}' created with BOTH callbacks.")
-
-    # --- Create Runner for this Agent, Using SAME Stateful Session Service ---
-    # Ensure session_service_stateful exists from Step 4
-    if 'session_service_stateful' in globals():
-        runner_root_tool_guardrail = Runner(
-            agent=root_agent ,
-            app_name=APP_NAME, # Use consistent APP_NAME
-            session_service=session_service_stateful # <<< Use the service from Step 4
-        )
-        print(f"✅ Runner created for tool guardrail agent '{runner_root_tool_guardrail.agent.name}', using stateful session service.")
-    else:
-        print("❌ Cannot create runner. 'session_service_stateful' from Step 4/5 is missing.")
-
 else:
     print("❌ Cannot create root agent with tool guardrail. Prerequisites missing.")
     if not greeting_agent: print("   - Greeting Agent")
