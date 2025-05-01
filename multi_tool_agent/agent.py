@@ -35,12 +35,9 @@ from google.adk.tools.tool_context import ToolContext
 
 from .weather import get_weather_at
 
-def get_weather_stateful(latitude: float, longitude: float, city: str, tool_context: ToolContext) -> dict:
+async def get_weather_stateful(city: str, tool_context: ToolContext) -> dict:
     """Retrieves weather, converts temp unit based on session state.
-    If the latitude or longitude for a city is not known, derive it from the location of the city.
      Args:
-        latitude (float): The latitude coordinate of the city for which to retrieve the weather report.
-        longitude (float): The longitude coordinate of the city for which to retrieve the weather report.
         city (str): The name of the city for which to retrieve the weather report.
 
     Returns:
@@ -55,7 +52,9 @@ def get_weather_stateful(latitude: float, longitude: float, city: str, tool_cont
     city_normalized = city.lower().replace(" ", "")
 
     try:
-        temp_c, condition = get_weather_at(latitude, longitude)
+        forecast = await get_weather_at(city)
+        print(f"--- Tool: Polled weather for {forecast.location}, {forecast.country} ---")
+        temp_c, condition = forecast.temperature, forecast.description
 
         # Format temperature based on state preference
         if preferred_unit == "Fahrenheit":
@@ -226,13 +225,11 @@ def test_missing_coords_tool_guardrail(
     # Check if it's the correct tool and the city argument matches the blocked city
     if tool_name == target_tool_name:
         city_argument = args.get("city", "") # Safely get the 'city' argument
-        latitude_argument = args.get("latitude", "") 
-        longitude_argument = args.get("longitude", "")
-        if latitude_argument and longitude_argument:
+        if city_argument:
             print(f"--- Callback: is allowed for tool '{tool_name}'. ---")
             return None
         else:
-            print(f"--- Callback: Detected missing params Lat:'{latitude_argument}', Long:'{longitude_argument}'. Blocking tool execution! ---")
+            print(f"--- Callback: Detected missing params City:'{city_argument}'. Blocking tool execution! ---")
             # Optionally update state
             tool_context.state["guardrail_tool_block_triggered"] = True
             print(f"--- Callback: Set state 'guardrail_tool_block_triggered': True ---")
@@ -241,7 +238,7 @@ def test_missing_coords_tool_guardrail(
             # This dictionary becomes the tool's result, skipping the actual tool run.
             return {
                 "status": "error",
-                "error_message": f"Data error: The agent cannot find the coordinates for the city {city_argument}."
+                "error_message": f"Data error: Cannot find weather report for the city {city_argument}."
             }
     else:
         print(f"--- Callback: Tool '{tool_name}' is not the target tool. Allowing. ---")
@@ -271,7 +268,6 @@ if ('greeting_agent' in globals() and greeting_agent and
         model=root_agent_model,
         description="Main agent: Handles weather, delegates greetings/farewells, includes input keyword guardrail.",
         instruction="You are the main Weather Agent. Provide weather using 'get_weather_stateful'. "
-                    "Provide the latitude and longitude coordinates of a city to the tools."
                     "Delegate simple greetings to 'greeting_agent' and farewells to 'farewell_agent'. "
                     "Handle only weather requests, greetings, and farewells. ",
         tools=[get_weather_stateful],
